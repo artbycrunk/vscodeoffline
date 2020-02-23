@@ -139,29 +139,16 @@ class Utility(object):
 
     @staticmethod
     def validate_platform(platform):
-        if platform in PLATFORMS:
-            return True
-        else:
-            return False
+        return platform in PLATFORMS
 
     @staticmethod
     def validate_architecture(arch):
-        if arch in ARCHITECTURES:
-            return True
-        else:
-            return False
+        return arch in ARCHITECTURES
 
     @staticmethod
     def validate_buildtype(buildtype):
-        if buildtype in BUILDTYPES:
-            return True
-        else:
-            return False
+        return buildtype in BUILDTYPES
 
     @staticmethod
     def validate_quality(quality):
-        if quality in QUALITIES:
-            return True
-        else:
-            return False
-
+        return quality in QUALITIES
