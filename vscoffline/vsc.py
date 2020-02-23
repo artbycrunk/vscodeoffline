@@ -92,18 +92,16 @@ class Utility(object):
     
     @staticmethod
     def load_json(filepath):
-        result = []
+        result = list()
         if not os.path.exists(filepath):
             log.debug(f'Unable to load json from {filepath}')
-            return []
+            return result
+
         with io.open(filepath, 'r', encoding='utf-8-sig') as fp:
             try:
                 result = json.load(fp)
-                if not result:
-                    return []
             except json.decoder.JSONDecodeError:
                 log.debug(f'JSONDecodeError while processing {filepath}')
-                return []
         return result
     
     @staticmethod
