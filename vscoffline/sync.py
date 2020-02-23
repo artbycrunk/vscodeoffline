@@ -1,7 +1,20 @@
-import os, sys, argparse, requests, pathlib, hashlib, uuid, logzero, logging, json, time, datetime
+import argparse
+import datetime
+import hashlib
+import json
+import logging
+import os
+import pathlib
+import sys
+import time
+import uuid
+
+import logzero
+import requests
 from logzero import logger as log
-from pytimeparse.timeparse import timeparse
+
 import vsc
+from pytimeparse.timeparse import timeparse
 
 
 class VSCUpdateDefinition(object):

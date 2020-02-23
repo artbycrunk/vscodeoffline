@@ -1,10 +1,16 @@
-import os, sys, time, json, glob
-import falcon
-from logzero import logger as log
-from wsgiref import simple_server
-from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler
+import glob
+import json
+import os
+import sys
+import time
 from threading import Event, Thread
+from wsgiref import simple_server
+
+from logzero import logger as log
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers.polling import PollingObserver
+
+import falcon
 import vsc
 
 
