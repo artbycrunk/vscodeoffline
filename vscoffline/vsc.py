@@ -1,5 +1,11 @@
-import os, io, json, hashlib, glob, datetime
+import datetime
+import glob
+import hashlib
+import io
+import json
+import os
 from enum import IntFlag
+
 from logzero import logger as log
 
 PLATFORMS = ['win32', 'linux', 'linux-deb', 'linux-rpm', 'darwin', 'linux-snap', 'server-linux']
