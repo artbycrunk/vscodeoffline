@@ -178,3 +178,21 @@ class Utility(object):
     @staticmethod
     def validate_quality(quality):
         return quality in QUALITIES
+
+    @staticmethod
+    def validate_identity(
+        platform,architecture,buildtype,quality, insider):
+        if quality == "insider" and not insider:
+            return False
+        if platform == "win32" and architecture == "ia32":
+            return False
+        if platform == "darwin" and (
+            architecture != "" or buildtype != ""
+        ):
+            return False
+        if "linux" in platform and (
+            architecture == "" or buildtype != ""
+        ):
+            return False
+        return True
+
