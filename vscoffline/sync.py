@@ -22,7 +22,13 @@ class VSCBase(object):
     session = requests.session()
 
     def get_url(self, url):
-        return self.session.get(url, allow_redirects=True, timeout=vsc.TIMEOUT)
+        result = self.session.get(url, allow_redirects=True, timeout=vsc.TIMEOUT)
+        if result.status_code != 200:
+            log.warning(
+                f"Failed accessing url {url}, unhandled status code {result.status_code}"
+            )
+            return False
+        return result
 
     def download_url(url, dest_filename):
         result = self.get_url(url)
@@ -79,7 +85,7 @@ class VSCUpdateDefinition(VSCBase):
             self.identity += f"-{architecture}"
         if buildtype:
             self.identity += f"-{buildtype}"
-        self.key = f"{self.identity}-{self.quality}"
+        self.key = f"{self.identity}/{self.quality}"
 
     def check_for_update(self, old_commit_id=None):
         if not old_commit_id:
@@ -90,15 +96,8 @@ class VSCUpdateDefinition(VSCBase):
         log.debug(f"Update url {url}")
         result = self.get_url(url)
         self.checkedForUpdate = True
-
-        if result.status_code == 204:
-            # No update available
-            return False
-        elif result.status_code != 200:
-            # Unhandled response from API
-            log.warning(
-                f"Update url failed {url}. Unhandled status code {result.status_code}"
-            )
+        
+        if not result or result.status_code == 204: # No update available
             return False
 
         jresult = result.json()
@@ -181,6 +180,7 @@ class VSCUpdateDefinition(VSCBase):
 
 class VSCExtensionDefinition(VSCBase):
     def __init__(self, identity, raw=None):
+        self.key = identity
         self.identity = identity
         self.extensionId = None
         self.recommended = False
@@ -343,13 +343,7 @@ class VSCMarketplace(VSCBase):
 
     def get_recommendations_old(self, destination):
         result = self.get_url(vsc.URL_RECOMMENDATIONS)
-        # result = self.session.get(
-        #     vsc.URL_RECOMMENDATIONS, allow_redirects=True, timeout=vsc.TIMEOUT
-        # )
-        if result.status_code != 200:
-            log.warning(
-                f"get_recommendations failed accessing url {vsc.URL_RECOMMENDATIONS}, unhandled status code {result.status_code}"
-            )
+        if not result:
             return False
 
         jresult = result.json()
@@ -366,11 +360,9 @@ class VSCMarketplace(VSCBase):
 
     def get_malicious(self, destination, extensions=None):
         result = self.get_url(vsc.URL_MALICIOUS)
-        if result.status_code != 200:
-            log.warning(
-                f"get_malicious failed accessing url {vsc.URL_MALICIOUS}, unhandled status code {result.status_code}"
-            )
+        if not result:
             return False
+
         # Remove random utf-8 nbsp from server response
         stripped = result.content.decode("utf-8", "ignore").replace("\xa0", "")
         jresult = json.loads(stripped)
@@ -558,6 +550,7 @@ def run(config):
     abs_artifactdir = os.path.abspath(config.artifactdir)
     mp = VSCMarketplace(config.checkinsider)
 
+    #Process vscode executable updates
     if config.checkbinaries and not config.skipbinaries:
         log.info("Syncing VS Code Update Versions")
         versions = VSCUpdates.latest_versions(config.checkinsider)
@@ -570,6 +563,7 @@ def run(config):
             version.download_update(
                 config.artifactdir_installers, save_state=True)
 
+    #Process vscode extension updates
     if config.checkspecified:
         log.info("Syncing VS Code Specified Extensions")
         specifiedpath = os.path.join(abs_artifactdir, "specified.json")
