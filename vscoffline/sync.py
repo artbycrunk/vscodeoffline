@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -12,14 +13,25 @@ import uuid
 import logzero
 import requests
 from logzero import logger as log
+from pytimeparse.timeparse import timeparse
 
 import vsc
-from pytimeparse.timeparse import timeparse
 
 
 class VSCBase(object):
     session = requests.session()
 
+    def get_url(self, url):
+        return self.session.get(url, allow_redirects=True, timeout=vsc.TIMEOUT)
+
+    def download_url(url, dest_filename):
+        result = self.get_url(url)
+        with open(dest_filename, "wb") as dest:
+            dest.write(result.content)
+
+    def ensure_dir(self, directory):
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
 
 class VSCUpdateDefinition(VSCBase):
     def __init__(
@@ -40,22 +52,14 @@ class VSCUpdateDefinition(VSCBase):
 
         identity_dict = {
             "platform": platform,
-            "architecture", architecture,
+            "architecture": architecture,
             "buildtype": buildtype,
             "quality": quality
         }
         for key, item in identity_dict.items():
-            if not vsc.Utility.getattr(f"validate_{key}")(item):
+            if not getattr(vsc.Utility, f"validate_{key}")(item):
                 raise ValueError(f"{key} {item} invalid or not implemented")
 
-        self.identity = platform
-
-        if architecture:
-            self.identity += f"-{architecture}"
-        if buildtype:
-            self.identity += f"-{buildtype}"
-
-        # self.__dict__.update(locals())
         self.platform = platform
         self.architecture = architecture
         self.buildtype = buildtype
@@ -70,6 +74,13 @@ class VSCUpdateDefinition(VSCBase):
         self.supportsFastUpdate = supportsFastUpdate
         self.checkedForUpdate = False
 
+        self.identity = platform
+        if architecture:
+            self.identity += f"-{architecture}"
+        if buildtype:
+            self.identity += f"-{buildtype}"
+        self.key = f"{self.identity}-{self.quality}"
+
     def check_for_update(self, old_commit_id=None):
         if not old_commit_id:
             old_commit_id = "7c4205b5c6e52a53b81c69d2b2dc8a627abaa0ba"  # To trigger the API to delta
@@ -77,7 +88,7 @@ class VSCUpdateDefinition(VSCBase):
         url = vsc.URL_BINUPDATES + f"{self.identity}/{self.quality}/{old_commit_id}"
 
         log.debug(f"Update url {url}")
-        result = self.session.get(url, allow_redirects=True, timeout=vsc.TIMEOUT)
+        result = self.get_url(url)
         self.checkedForUpdate = True
 
         if result.status_code == 204:
@@ -106,7 +117,7 @@ class VSCUpdateDefinition(VSCBase):
             return True
         return False
 
-    def download_update(self, destination):
+    def download_update(self, destination, save_state=False):
         if not self.checkedForUpdate:
             log.warning(
                 "Cannot download update if the update definition has not been downloaded"
@@ -116,49 +127,48 @@ class VSCUpdateDefinition(VSCBase):
             log.warning("Cannot download update if there is no url to download from")
             return
 
-        destination = os.path.join(destination, self.identity, self.quality)
-        if not os.path.isdir(destination):
-            os.makedirs(destination)
+        _id = f"{self.key}-{self.name}"
+        _destination = os.path.join(destination, self.identity, self.quality)
+        self.ensure_dir(_destination)
 
         suffix = pathlib.Path(self.updateurl).suffix
         if ".gz" in suffix:
             suffix = "".join(pathlib.Path(self.updateurl).suffixes)
-        destfile = os.path.join(destination, f"vscode-{self.name}{suffix}")
+        destfile = os.path.join(_destination, f"vscode-{self.name}{suffix}")
 
         if os.path.exists(destfile) and vsc.Utility.hash_file_and_check(
             destfile, self.sha256hash
         ):
-            log.debug(f"Previously downloaded {self}")
+            log.debug(f"Previously downloaded {_id}")
+            if save_state:
+                self.save_state(destination)
             return True
 
-        log.info(f"Downloading {self} to {destfile}")
-        result = self.session.get(
-            self.updateurl, allow_redirects=True, timeout=vsc.TIMEOUT
-        )
-        open(destfile, "wb").write(result.content)
+        log.info(f"Downloading {_id} to {destfile}")
+        self.download_url(self.updateurl, destfile)
 
         if not vsc.Utility.hash_file_and_check(destfile, self.sha256hash):
             log.warning(
-                f"HASH MISMATCH for {self} at {destfile} expected {self.sha256hash}. Removing local file."
+                f"HASH MISMATCH for {_id} at {destfile} expected {self.sha256hash}. Removing local file."
             )
             os.remove(destfile)
             return False
-        log.debug(f"Hash ok for {self} with {self.sha256hash}")
+        log.debug(f"Hash ok for {_id} with {self.sha256hash}")
+        if save_state:
+            self.save_state(destination)
         return True
 
     def save_state(self, destination):
-        destination = os.path.join(destination, self.identity)
-        if not os.path.isdir(destination):
-            os.makedirs(destination)
+        _destination = os.path.join(destination, self.identity, self.quality)
+        self.ensure_dir(_destination)
+
         # Write version details blob as latest
-        vsc.Utility.write_json(
-            os.path.join(destination, self.quality, "latest.json"), self
-        )
+        json_path = os.path.join(_destination, "latest.json")
+        vsc.Utility.write_json(json_path, self)
         # Write version details blob as the commit id
         if self.version:
-            vsc.Utility.write_json(
-                os.path.join(destination, self.quality, f"{self.version}.json"), self
-            )
+            json_path = os.path.join(_destination, f"{self.version}.json")
+            vsc.Utility.write_json(json_path, self)
 
     def __repr__(self):
         strs = f"<{self.__class__.__name__}> {self.quality}/{self.identity}"
@@ -205,17 +215,15 @@ class VSCExtensionDefinition(VSCBase):
         return bonusextensions
 
     def save_state(self, destination):
-        destination = os.path.join(destination, self.identity)
-        if not os.path.isdir(destination):
-            os.makedirs(destination)
+        _destination = os.path.join(destination, self.identity)
+        self.ensure_dir(_destination)
+
         # Save as latest
-        with open(os.path.join(destination, "latest.json"), "w") as outfile:
-            json.dump(self, outfile, cls=vsc.MagicJsonEncoder, indent=4)
+        json_path = os.path.join(_destination, "latest.json")
+        vsc.Utility.write_json(json_path, self)
         # Save in the version folder
-        with open(
-            os.path.join(destination, self.version(), "extension.json"), "w"
-        ) as outfile:
-            json.dump(self, outfile, cls=vsc.MagicJsonEncoder, indent=4)
+        json_path = os.path.join(_destination, self.version(), "extension.json")
+        vsc.Utility.write_json(json_path, self)
 
     def version(self):
         if self.versions and len(self.versions) > 1:
@@ -235,8 +243,8 @@ class VSCExtensionDefinition(VSCBase):
             )
             return
         destination = os.path.join(destination, self.identity, self.version())
-        if not os.path.isdir(destination):
-            os.makedirs(destination)
+        self.ensure_dir(destination)
+
         url = self._get_asset_source(asset)
         if not url:
             log.warning(
@@ -246,9 +254,7 @@ class VSCExtensionDefinition(VSCBase):
         destfile = os.path.join(destination, f"{asset}")
         if not os.path.exists(destfile):
             log.debug(f"Downloading {self.identity} {asset} to {destfile}")
-            result = self.session.get(url, allow_redirects=True, timeout=vsc.TIMEOUT)
-            with open(destfile, "wb") as dest:
-                dest.write(result.content)
+            self.download_url(url, destfile)
 
     def _get_asset_types(self):
         if self.versions and len(self.versions) > 1:
@@ -256,7 +262,7 @@ class VSCExtensionDefinition(VSCBase):
                 f"_get_asset_types(). More than one version returned for {self.identity}. Unhandled."
             )
             return None
-        assets = []
+        assets = list()
         for asset in self.versions[0]["files"]:
             if "assetType" in asset:
                 assets.append(asset["assetType"])
@@ -279,31 +285,25 @@ class VSCExtensionDefinition(VSCBase):
 
 
 class VSCUpdates(object):
+
     @staticmethod
     def latest_versions(insider=False):
         versions = dict()
-        for platform in vsc.PLATFORMS:
-            for architecture in vsc.ARCHITECTURES:
-                for buildtype in vsc.BUILDTYPES:
-                    for quality in vsc.QUALITIES:
-                        if quality == "insider" and not insider:
-                            continue
-                        if platform == "win32" and architecture == "ia32":
-                            continue
-                        if platform == "darwin" and (
-                            architecture != "" or buildtype != ""
-                        ):
-                            continue
-                        if "linux" in platform and (
-                            architecture == "" or buildtype != ""
-                        ):
-                            continue
-                        ver = VSCUpdateDefinition(
-                            platform, architecture, buildtype, quality
-                        )
-                        ver.check_for_update()
-                        log.info(ver)
-                        versions[f"{ver.identity}-{ver.quality}"] = ver
+        for platform, architecture, buildtype, quality in itertools.product(
+            vsc.PLATFORMS, vsc.ARCHITECTURES, vsc.BUILDTYPES, vsc.QUALITIES):
+
+            if not vsc.Utility.validate_identity(
+                platform, architecture, buildtype, quality, insider):
+                continue
+
+            ver = VSCUpdateDefinition(
+                platform, architecture, buildtype, quality
+            )
+            ver.check_for_update()
+            log.info(ver)
+            versions[ver.key] = ver
+        if versions:
+            log.info(f"Checked {len(versions)} latest versions")
         return versions
 
     @staticmethod
@@ -342,9 +342,10 @@ class VSCMarketplace(VSCBase):
         return recommendations
 
     def get_recommendations_old(self, destination):
-        result = self.session.get(
-            vsc.URL_RECOMMENDATIONS, allow_redirects=True, timeout=vsc.TIMEOUT
-        )
+        result = self.get_url(vsc.URL_RECOMMENDATIONS)
+        # result = self.session.get(
+        #     vsc.URL_RECOMMENDATIONS, allow_redirects=True, timeout=vsc.TIMEOUT
+        # )
         if result.status_code != 200:
             log.warning(
                 f"get_recommendations failed accessing url {vsc.URL_RECOMMENDATIONS}, unhandled status code {result.status_code}"
@@ -364,9 +365,7 @@ class VSCMarketplace(VSCBase):
         return packages
 
     def get_malicious(self, destination, extensions=None):
-        result = self.session.get(
-            vsc.URL_MALICIOUS, allow_redirects=True, timeout=vsc.TIMEOUT
-        )
+        result = self.get_url(vsc.URL_MALICIOUS)
         if result.status_code != 200:
             log.warning(
                 f"get_malicious failed accessing url {vsc.URL_MALICIOUS}, unhandled status code {result.status_code}"
@@ -483,7 +482,7 @@ class VSCMarketplace(VSCBase):
                     if "resultMetadata" in jres:
                         for resmd in jres.get("resultMetadata"):
                             if "ResultCount" in resmd.get("metadataType"):
-                                total = resmd.gfet("metadataItems")[0].get("count")
+                                total = resmd.get("metadataItems")[0].get("count")
             if limit > 0 and count > limit:
                 break
 
@@ -565,13 +564,11 @@ def run(config):
 
     if config.updatebinaries and not config.skipbinaries:
         log.info("Syncing VS Code Binaries")
-        for idkey in versions:
-            if versions[idkey].updateurl:
-                result = versions[idkey].download_update(config.artifactdir_installers)
-
-                # Only save the reference json if the download was successful
-                if result:
-                    versions[idkey].save_state(config.artifactdir_installers)
+        for key, version in versions.items():
+            if not version.updateurl:
+                continue
+            version.download_update(
+                config.artifactdir_installers, save_state=True)
 
     if config.checkspecified:
         log.info("Syncing VS Code Specified Extensions")
