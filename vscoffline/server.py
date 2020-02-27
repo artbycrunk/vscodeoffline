@@ -349,14 +349,14 @@ class VSCIndex(object):
 
     def on_get(self, req, resp):        
         resp.content_type = 'text/html'
-        with open('/opt/vscoffline/vscgallery/content/index.html', 'r') as f:
+        with open(os.path.join(vsc.CONTENT_ROOT,'index.html'), 'r') as f:
             resp.body = f.read()
         resp.status = falcon.HTTP_200
 
 class VSCDirectoryBrowse(object):
 
     def __init__(self, root):
-        self.root = root
+        self.root = os.path.realpath(root)
 
     def on_get(self, req, resp):
         requested_path = os.path.join(self.root, req.get_param('path', required=True))
@@ -366,7 +366,7 @@ class VSCDirectoryBrowse(object):
             return
         resp.content_type = 'text/html'
         # Load template and replace variables
-        with open('/opt/vscoffline/vscgallery/content/browse.html', 'r') as f:
+        with open(os.path.join(vsc.CONTENT_ROOT,'browse.html'), 'r') as f:
             resp.body = f.read()
         resp.body = resp.body.replace('{PATH}', requested_path)
         resp.body = resp.body.replace('{CONTENT}', self.simple_dir_browse_response(requested_path))        
