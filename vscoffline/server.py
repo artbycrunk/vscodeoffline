@@ -167,11 +167,12 @@ class VSCGallery(object):
             name = extension['identity']
 
             # Repoint asset urls
-            asseturi = vsc.URLROOT + os.path.join(extensiondir, extension['versions'][0]['version'])
-            extension['versions'][0]['assetUri'] = asseturi
-            extension['versions'][0]['fallbackAssetUri'] = asseturi
-            for asset in extension['versions'][0]['files']:
-                asset['source'] = asseturi + '/' + asset['assetType']   
+            for version in extension.get('versions'):
+                asseturi = vsc.URLROOT + os.path.join(extensiondir, version.get('version'))
+                version['assetUri'] = asseturi
+                version['fallbackAssetUri'] = asseturi
+                for asset in version.get('files'):
+                    asset['source'] = asseturi + '/' + asset.get('assetType')
 
             # Map statistics for later lookup
             if 'statistics' not in extension or not extension['statistics']:
